@@ -105,9 +105,11 @@ tables. Pass ``parse_formulas=False`` to skip all of it, in which case
    with open_workbook('Book1.xlsb', parse_formulas=False) as wb:
        # Values only, as in pyxlsb 1.0.11 and earlier
 
-Known gaps: references into *other workbooks* render with a numeric
-``[n]`` book prefix rather than the linked file name, and the whitespace
-an author typed inside a formula is not preserved.
+The whitespace an author typed inside a formula is preserved, so the text
+round-trips byte for byte against what Excel itself writes.
+
+Known gap: references into *other workbooks* render with a numeric ``[n]``
+book prefix rather than the linked file name.
 
 As a sense of scale, parsing adds roughly 7 µs per formula, so a workbook
 containing a million of them costs a few tens of seconds on top of the

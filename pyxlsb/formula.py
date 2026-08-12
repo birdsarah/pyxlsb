@@ -268,15 +268,76 @@ def _area_text(first, last):
   return '{}:{}'.format(first.text(), last.text())
 
 
+# PtgAttrSpace subtypes: whether the run is spaces or newlines, and where it
+# sits relative to the token that follows it.
+_SPACE_CHARS = {0: ' ', 1: '\n', 2: ' ', 3: '\n', 4: ' ', 5: '\n', 6: ' ', 7: '\n'}
+_BEFORE_TOKEN = (0, 1, 6, 7)
+_BEFORE_OPEN = (2, 3)
+_BEFORE_CLOSE = (4, 5)
+
+
+class Spacing(object):
+  """Whitespace the author typed, recovered from the PtgAttrSpace tokens.
+
+  Excel emits these immediately before the token they decorate, so they
+  accumulate until a token actually renders and then apply to it.
+  """
+
+  __slots__ = ('parts',)
+
+  def __init__(self):
+    self.parts = ()
+
+  def add(self, kind, count):
+    self.parts = self.parts + ((kind, count),)
+
+  def _text(self, kinds):
+    if not self.parts:
+      return ''
+    return ''.join(_SPACE_CHARS.get(k, ' ') * n for k, n in self.parts if k in kinds)
+
+  @property
+  def before(self):
+    return self._text(_BEFORE_TOKEN)
+
+  @property
+  def before_open(self):
+    return self._text(_BEFORE_OPEN)
+
+  @property
+  def before_close(self):
+    return self._text(_BEFORE_CLOSE)
+
+
+EMPTY_SPACING = Spacing()
+
+
 class Token(object):
   """One Ptg. `render` mutates the operand stack the way Excel's would."""
 
   needs_extra = False
+  # Tokens that emit nothing must not swallow pending whitespace, or it would
+  # be lost instead of applying to whichever token renders next.
+  consumes_space = True
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     raise NotImplementedError
 
   def read_extra(self, buf, ctx):
+    pass
+
+
+class SpaceToken(Token):
+  """PtgAttrSpace: a run of spaces or newlines before the following token."""
+
+  consumes_space = False
+
+  def __init__(self, kind, count):
+    super(SpaceToken, self).__init__()
+    self.kind = kind
+    self.count = count
+
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     pass
 
 
@@ -285,8 +346,8 @@ class Operand(Token):
     super(Operand, self).__init__()
     self._text = text
 
-  def render(self, stack, ctx):
-    stack.append(self._text)
+  def render(self, stack, ctx, space=EMPTY_SPACING):
+    stack.append(space.before + self._text)
 
 
 class BinaryOp(Token):
@@ -294,27 +355,47 @@ class BinaryOp(Token):
     super(BinaryOp, self).__init__()
     self.op = op
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if len(stack) < 2:
       raise FormulaError('operand underflow at binary operator {!r}'.format(self.op))
     right = stack.pop()
     left = stack.pop()
-    stack.append('{}{}{}'.format(left, self.op, right))
+    stack.append('{}{}{}{}'.format(left, space.before, self.op, right))
 
 
-class UnaryOp(Token):
-  def __init__(self, fmt):
-    super(UnaryOp, self).__init__()
-    self.fmt = fmt
+class PrefixOp(Token):
+  def __init__(self, op):
+    super(PrefixOp, self).__init__()
+    self.op = op
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if not stack:
       raise FormulaError('operand underflow at unary operator')
-    stack.append(self.fmt.format(stack.pop()))
+    stack.append('{}{}{}'.format(space.before, self.op, stack.pop()))
+
+
+class PostfixOp(Token):
+  def __init__(self, op):
+    super(PostfixOp, self).__init__()
+    self.op = op
+
+  def render(self, stack, ctx, space=EMPTY_SPACING):
+    if not stack:
+      raise FormulaError('operand underflow at unary operator')
+    stack.append('{}{}{}'.format(stack.pop(), space.before, self.op))
+
+
+class ParenToken(Token):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
+    if not stack:
+      raise FormulaError('operand underflow at parenthesis')
+    stack.append('{}({}{})'.format(space.before_open, stack.pop(), space.before_close))
 
 
 class Noop(Token):
-  def render(self, stack, ctx):
+  consumes_space = False
+
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     pass
 
 
@@ -323,8 +404,8 @@ class RefToken(Token):
     super(RefToken, self).__init__()
     self.ref = ref
 
-  def render(self, stack, ctx):
-    stack.append(self.ref.text())
+  def render(self, stack, ctx, space=EMPTY_SPACING):
+    stack.append(space.before + self.ref.text())
 
 
 class AreaToken(Token):
@@ -333,8 +414,8 @@ class AreaToken(Token):
     self.first = first
     self.last = last
 
-  def render(self, stack, ctx):
-    stack.append(_area_text(self.first, self.last))
+  def render(self, stack, ctx, space=EMPTY_SPACING):
+    stack.append(space.before + _area_text(self.first, self.last))
 
 
 class Ref3dToken(Token):
@@ -345,7 +426,7 @@ class Ref3dToken(Token):
     self.last = last
     self.err = err
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if ctx is None:
       raise FormulaError('a FormulaContext is required to resolve 3D references')
     sheet = ctx.sheet_ref(self.ixti)
@@ -355,7 +436,7 @@ class Ref3dToken(Token):
       body = _area_text(self.ref, self.last)
     else:
       body = self.ref.text()
-    stack.append('{}!{}'.format(sheet, body))
+    stack.append('{}{}!{}'.format(space.before, sheet, body))
 
 
 class NameToken(Token):
@@ -367,10 +448,10 @@ class NameToken(Token):
     self.idx = idx
     self.ixti = ixti
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if ctx is None:
       raise FormulaError('a FormulaContext is required to resolve defined names')
-    stack.append(ctx.name(self.idx))
+    stack.append(space.before + ctx.name(self.idx))
 
 
 class FuncToken(Token):
@@ -379,7 +460,7 @@ class FuncToken(Token):
     self.iftab = iftab
     self.argc = argc
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     name = FTAB.get(self.iftab)
     argc = self.argc
     if argc is None:
@@ -397,18 +478,21 @@ class FuncToken(Token):
     if name == 'UDF' and args:
       # iftab 255 is the user-defined-function marker: the first operand is
       # the function's own name, the rest are its arguments.
-      stack.append('{}({})'.format(args[0], ','.join(args[1:])))
+      head, args = args[0], args[1:]
     else:
-      stack.append('{}({})'.format(name, ','.join(args)))
+      head = space.before + name
+    stack.append('{}{}({}{})'.format(
+      head, space.before_open, ','.join(args), space.before_close))
 
 
 class SumToken(Token):
   """PtgAttrSum: the single-argument SUM Excel special-cases."""
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if not stack:
       raise FormulaError('operand underflow at PtgAttrSum')
-    stack.append('SUM({})'.format(stack.pop()))
+    stack.append('{}SUM{}({}{})'.format(
+      space.before, space.before_open, stack.pop(), space.before_close))
 
 
 class ArrayToken(Token):
@@ -429,10 +513,10 @@ class ArrayToken(Token):
       grid.append(row)
     self._text = '{' + ';'.join(','.join(r) for r in grid) + '}'
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if self._text is None:
       raise FormulaError('array constant is missing its rgcb payload')
-    stack.append(self._text)
+    stack.append(space.before + self._text)
 
 
 def _read_ser_ar(buf):
@@ -451,6 +535,8 @@ def _read_ser_ar(buf):
 
 
 class MemToken(Token):
+  consumes_space = False
+
   """PtgMemArea and friends: a cached-result hint wrapping a subexpression.
 
   The subexpression that follows renders on its own, so the token itself
@@ -465,7 +551,7 @@ class MemToken(Token):
     count = buf.int()
     buf.skip(count * 16)
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     pass
 
 
@@ -482,7 +568,7 @@ class ExpToken(Token):
   def read_extra(self, buf, ctx):
     self.col = buf.int()
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     raise FormulaError('shared formula host at row {} must be resolved by the caller'
                        .format(self.row))
 
@@ -498,7 +584,7 @@ class ListToken(Token):
     self.col_first = col_first
     self.col_last = col_last
 
-  def render(self, stack, ctx):
+  def render(self, stack, ctx, space=EMPTY_SPACING):
     if ctx is None:
       raise FormulaError('a FormulaContext is required to resolve table references')
     name, columns = ctx.table(self.list_index)
@@ -514,6 +600,7 @@ class ListToken(Token):
         parts.append('[' + columns[self.col_first] + ']')
       elif self.col_last < len(columns):
         parts.append('[' + columns[self.col_first] + ']:[' + columns[self.col_last] + ']')
+    name = space.before + name
     if not parts:
       stack.append(name)
     elif len(parts) == 1 and selector is None:
@@ -546,13 +633,13 @@ def _read_token(buf, base):
   if ptg in _BINARY_OPS:
     return BinaryOp(_BINARY_OPS[ptg])
   if ptg == 0x12:
-    return UnaryOp('+{}')
+    return PrefixOp('+')
   if ptg == 0x13:
-    return UnaryOp('-{}')
+    return PrefixOp('-')
   if ptg == 0x14:
-    return UnaryOp('{}%')
+    return PostfixOp('%')
   if ptg == 0x15:
-    return UnaryOp('({})')
+    return ParenToken()
   if ptg == 0x16:
     return Operand('')
   if ptg == 0x17:
@@ -644,6 +731,9 @@ def _read_attr(buf):
     count = buf.short()
     buf.skip((count + 1) * 2)
     return Noop()
+  if flags & 0x40:
+    kind = buf.byte()
+    return SpaceToken(kind, buf.byte())
   if flags & 0x10:
     buf.skip(2)
     return SumToken()
@@ -670,8 +760,18 @@ def _read_elf(buf):
 def stringify(tokens, ctx=None):
   """Render parsed tokens as formula text (without a leading ``=``)."""
   stack = []
+  spacing = EMPTY_SPACING
   for token in tokens:
-    token.render(stack, ctx)
+    if isinstance(token, SpaceToken):
+      if spacing is EMPTY_SPACING:
+        spacing = Spacing()
+      spacing.add(token.kind, token.count)
+      continue
+    if not token.consumes_space:
+      token.render(stack, ctx, EMPTY_SPACING)
+      continue
+    token.render(stack, ctx, spacing)
+    spacing = EMPTY_SPACING
   if len(stack) != 1:
     raise FormulaError('formula did not reduce to a single expression '
                        '({} operands left)'.format(len(stack)))

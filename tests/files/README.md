@@ -9,6 +9,7 @@ agreeing with our own reading of the format.
 | --- | --- |
 | `fixture.xlsb` / `fixture_excel.xlsx` | 107-formula corpus: operators, constants, every absolute/relative reference form, whole column and row references, set operators, fixed- and variable-arity functions, array constants, cross-sheet references, defined names, shared formulas, structured table references. |
 | `fixture2.xlsb` / `fixture2_excel.xlsx` | Single- and multi-cell array (CSE) formulas, a sheet name containing an apostrophe, deeper nesting, and modern `_xlfn.` functions. |
+| `fixture3.xlsb` / `fixture3_excel.xlsx` | Formulas carrying the whitespace their author typed, including spaces inside call parentheses, around prefix and postfix operators, and the space that *is* the intersection operator. |
 | `simple.xlsb` | A minimal real-world workbook (`B2 =A2+A1`, `B3 =A3+B2`). |
 
 ## Regenerating

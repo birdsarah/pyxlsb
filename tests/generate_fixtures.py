@@ -171,11 +171,34 @@ def build_extras():
   return wb
 
 
+def build_spaced():
+  """Formulas carrying the whitespace their author typed."""
+  wb = Workbook()
+  ws = wb.active
+  ws.title = 'Space'
+  for i in range(1, 11):
+    ws.cell(row=i, column=1, value=float(i))
+    ws.cell(row=i, column=2, value=float(i * 2))
+  formulas = [
+      '=IFERROR(A1, 0)', '=IFERROR(A1,  0)', '=SUM(A1:A5, A1)',
+      '=IF(A1 > 1, "yes", "no")', '=A1 + A2', '=A1  +  A2', '= A1+A2',
+      '=A1 %', '=- A1', '=(A1 + A2) * A3', '=SUM( A1:A5 )', '=SUM(A1:A5 )',
+      '=ROUND( SUM(A1:A5) / COUNT(A1:A5), 4 )', '=CONCATENATE(A1, " x ", A2)',
+      '=IF(A1>1, SUM(A1:A2), MAX(A1:A2))', '="keep  inner  spaces"',
+      '=A1&"  "&A2', '=SUM(A1:A3 A2:A5)', '=SUM((A1:A2, A4:A5))',
+      '=MAX( A1 , A2 )',
+  ]
+  for k, f in enumerate(formulas):
+    ws.cell(row=k + 1, column=4, value=f)
+  return wb
+
+
 if __name__ == '__main__':
   if not os.path.isdir(OUTDIR):
     os.makedirs(OUTDIR)
   for name, build in (('fixture.xlsx', build_corpus),
-                      ('fixture2.xlsx', build_extras)):
+                      ('fixture2.xlsx', build_extras),
+                      ('fixture3.xlsx', build_spaced)):
     path = os.path.join(OUTDIR, name)
     build().save(path)
     print('wrote', path)

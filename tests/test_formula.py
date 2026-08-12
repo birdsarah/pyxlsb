@@ -23,6 +23,9 @@ CORPUS_TRUTH = xlsx_formulas('fixture_excel.xlsx', 'Formulas')
 EXTRAS = read_formulas('fixture2.xlsb', 'Calc')
 EXTRAS_TRUTH = xlsx_formulas('fixture2_excel.xlsx', 'Calc')
 
+SPACED = read_formulas('fixture3.xlsb', 'Space')
+SPACED_TRUTH = xlsx_formulas('fixture3_excel.xlsx', 'Space')
+
 # Excel prefixes an unresolved user function with `_xludf.` when it writes
 # .xlsx, but stores the bare name in .xlsb. We report what the file holds.
 EXTRAS_TRUTH['H19'] = EXTRAS_TRUTH['H19'].replace('_xludf.', '')
@@ -38,9 +41,44 @@ def test_array_and_edge_cases_match_excel(ref):
   assert EXTRAS.get(ref) == EXTRAS_TRUTH[ref]
 
 
+@pytest.mark.parametrize('ref', sorted(SPACED_TRUTH))
+def test_author_whitespace_is_preserved(ref):
+  assert SPACED.get(ref) == SPACED_TRUTH[ref]
+
+
 def test_every_formula_cell_is_found():
   assert set(CORPUS) == set(CORPUS_TRUTH)
   assert set(EXTRAS) == set(EXTRAS_TRUTH)
+  assert set(SPACED) == set(SPACED_TRUTH)
+
+
+class TestWhitespace(object):
+  """PtgAttrSpace records the spacing the author typed, and it round-trips."""
+
+  def test_space_before_an_argument(self):
+    assert SPACED['D1'] == 'IFERROR(A1, 0)'
+    assert SPACED['D2'] == 'IFERROR(A1,  0)'
+
+  def test_space_around_operators(self):
+    assert SPACED['D5'] == 'A1 + A2'
+    assert SPACED['D6'] == 'A1  +  A2'
+
+  def test_postfix_and_prefix_operators(self):
+    assert SPACED['D8'] == 'A1 %'
+    assert SPACED['D9'] == '- A1'
+
+  def test_space_inside_call_parentheses(self):
+    assert SPACED['D11'] == 'SUM( A1:A5 )'
+    assert SPACED['D12'] == 'SUM(A1:A5 )'
+
+  def test_intersection_operator_is_not_decoration(self):
+    # The space between two ranges is an operator, not spacing, and has to
+    # survive on its own terms.
+    assert SPACED['D18'] == 'SUM(A1:A3 A2:A5)'
+
+  def test_string_literals_are_untouched(self):
+    assert SPACED['D16'] == '"keep  inner  spaces"'
+    assert SPACED['D17'] == 'A1&"  "&A2'
 
 
 def test_simple_workbook():
