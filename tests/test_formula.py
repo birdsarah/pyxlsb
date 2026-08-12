@@ -219,6 +219,50 @@ class TestStoredErrors(object):
       open_workbook(path('simple.xlsb'), formula_errors=mode)
 
 
+class TestSharedFormulaHostLookup(object):
+  """A PtgExp host is not always the top-left of the block it belongs to.
+
+  Seen in the wild: a shared formula defined over AO450:AR455 whose cells all
+  point at AP450, because AO450 carries no formula of its own. Keying the
+  lookup on the range's top-left alone silently loses every cell of the block.
+  """
+
+  SHARED = (b'shared-rgce', b'')
+  ARRAY = (b'array-rgce', b'')
+
+  @pytest.fixture
+  def sheet(self):
+    with open_workbook(path('simple.xlsb')) as wb:
+      with wb.get_sheet('Sheet1') as ws:
+        # AO450:AR455, hosted at AP450 rather than its top-left AO450.
+        ws._shared_formulas[(449, 40)] = self.SHARED
+        ws._formula_ranges.append((449, 40, 454, 43, self.SHARED, False))
+        ws._array_formulas[(10, 5)] = self.ARRAY
+        ws._formula_ranges.append((10, 5, 12, 5, self.ARRAY, True))
+        yield ws
+
+  def test_exact_top_left_still_hits(self, sheet):
+    assert sheet._host_formula((449, 40)) == (self.SHARED, False)
+
+  def test_host_inside_the_range_is_found(self, sheet):
+    assert sheet._host_formula((449, 41)) == (self.SHARED, False)
+    assert sheet._host_formula((454, 43)) == (self.SHARED, False)
+
+  def test_host_outside_every_range_is_not_found(self, sheet):
+    assert sheet._host_formula((449, 44)) == (None, False)
+    assert sheet._host_formula((455, 40)) == (None, False)
+    assert sheet._host_formula((448, 40)) == (None, False)
+
+  def test_array_blocks_are_reported_as_arrays(self, sheet):
+    assert sheet._host_formula((11, 5)) == (self.ARRAY, True)
+
+  def test_containment_hit_is_memoised(self, sheet):
+    assert (449, 41) not in sheet._shared_formulas
+    sheet._host_formula((449, 41))
+    # Cached under the host key, so repeat lookups skip the range scan.
+    assert sheet._shared_formulas[(449, 41)] == self.SHARED
+
+
 class TestGenuinelyUnreadableFormula(object):
   """The same behaviour, driven by a real file rather than a patched parser.
 

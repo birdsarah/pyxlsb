@@ -37,6 +37,7 @@ class Worksheet(object):
     self._formula_errors = formula_errors
     self._shared_formulas = {}
     self._array_formulas = {}
+    self._formula_ranges = []
     self._data_offset = 0
     self.dimension = None
     self.cols = []
@@ -72,6 +73,31 @@ class Worksheet(object):
           for c in xrange(item[1].w):
             self.hyperlinks[item[1].r + r, item[1].c + c] = item[1].rId
 
+  def _host_formula(self, host):
+    """Find the shared or array formula a PtgExp cell defers to.
+
+    Excel points a PtgExp at the first cell that actually carries the formula,
+    which is not always the top-left of the block it was defined over: a range
+    written as AO450:AR455 can be hosted at AP450 when AO450 itself holds no
+    formula. So an exact hit is only the fast path, and a miss falls back to
+    asking which defined range covers the host.
+    """
+    fmla = self._shared_formulas.get(host)
+    if fmla is not None:
+      return fmla, False
+    fmla = self._array_formulas.get(host)
+    if fmla is not None:
+      return fmla, True
+
+    row, col = host
+    for r1, c1, r2, c2, fmla, is_array in reversed(self._formula_ranges):
+      if r1 <= row <= r2 and c1 <= col <= c2:
+        # Memoise under the host key so each one is only searched for once.
+        target = self._array_formulas if is_array else self._shared_formulas
+        target[host] = fmla
+        return fmla, is_array
+    return None, False
+
   def _formula_text(self, row_num, col_num, fmla):
     """Render one cell's parsed formula, following shared formulas to their host."""
     try:
@@ -80,20 +106,16 @@ class Worksheet(object):
       if host is None:
         return formula.stringify(tokens, self._formula_context)
 
-      shared = self._shared_formulas.get(host)
-      if shared is not None:
-        # A shared formula stores its references as offsets, so it re-renders
-        # against whichever cell it was instantiated into.
-        return formula.to_string(shared[0], shared[1], self._formula_context,
-                                 (row_num, col_num))
+      hosted, is_array = self._host_formula(host)
+      if hosted is None:
+        raise formula.FormulaError(
+          'no shared or array formula defined at row {} column {}'.format(host[0], host[1]))
 
-      array = self._array_formulas.get(host)
-      if array is not None:
-        # Every cell of an array formula shows the host's text verbatim.
-        return formula.to_string(array[0], array[1], self._formula_context, host)
-
-      raise formula.FormulaError(
-        'no shared or array formula defined at row {} column {}'.format(host[0], host[1]))
+      # An array formula shows the host's text verbatim in every cell of the
+      # block; a shared formula stores its references as offsets and so
+      # re-renders against whichever cell it was instantiated into.
+      base = host if is_array else (row_num, col_num)
+      return formula.to_string(hosted[0], hosted[1], self._formula_context, base)
     except formula.FormulaError as exc:
       raise formula.FormulaError('{}!{}{}: {}'.format(
         self.name, formula.col_name(col_num), row_num + 1, exc))
@@ -127,10 +149,16 @@ class Worksheet(object):
             yield [Cell(row_num, i, None, None, None) for i in xrange(self.dimension.c + self.dimension.w)]
         row_num = item[1].r
         row = [Cell(row_num, i, None, None, None) for i in xrange(self.dimension.c + self.dimension.w)]
-      elif item[0] == biff12.SHAREDFORMULA:
-        self._shared_formulas[(item[1].r, item[1].c)] = item[1].f
-      elif item[0] == biff12.ARRAYFORMULA:
-        self._array_formulas[(item[1].r, item[1].c)] = item[1].f
+      elif item[0] == biff12.SHAREDFORMULA or item[0] == biff12.ARRAYFORMULA:
+        is_array = item[0] == biff12.ARRAYFORMULA
+        block = item[1]
+        if is_array:
+          self._array_formulas[(block.r, block.c)] = block.f
+        else:
+          self._shared_formulas[(block.r, block.c)] = block.f
+        self._formula_ranges.append((block.r, block.c,
+                                     block.r + block.h - 1, block.c + block.w - 1,
+                                     block.f, is_array))
       elif item[0] >= biff12.BLANK and item[0] <= biff12.FORMULA_BOOLERR:
         if item[0] == biff12.STRING and self._stringtable is not None:
           row[item[1].c] = Cell(row_num, item[1].c, self._stringtable[item[1].v], None, None)
