@@ -222,13 +222,36 @@ def build_scoped():
   return wb
 
 
+def build_deleted():
+  """A workbook whose referenced sheet is deleted after the fact.
+
+  `Doomed` has to be removed in Excel once the file is open -- see
+  files/README.md -- because the point is what Excel rewrites the references
+  into, which is `#REF!`.
+  """
+  wb = Workbook()
+  keep = wb.active
+  keep.title = 'Keep'
+  doomed = wb.create_sheet('Doomed')
+  for i in range(1, 6):
+    keep.cell(row=i, column=1, value=float(i))
+    doomed.cell(row=i, column=1, value=float(i * 10))
+  keep['D1'] = '=Doomed!A1'
+  keep['D2'] = '=SUM(Doomed!A1:A5)'
+  keep['D3'] = '=IF(A1=1,Doomed!A2,0)'
+  keep['D4'] = '=Doomed!A1+A1'
+  keep['D5'] = '=A1+A2'
+  return wb
+
+
 if __name__ == '__main__':
   if not os.path.isdir(OUTDIR):
     os.makedirs(OUTDIR)
   for name, build in (('fixture.xlsx', build_corpus),
                       ('fixture2.xlsx', build_extras),
                       ('fixture3.xlsx', build_spaced),
-                      ('fixture4.xlsx', build_scoped)):
+                      ('fixture4.xlsx', build_scoped),
+                      ('fixture5.xlsx', build_deleted)):
     path = os.path.join(OUTDIR, name)
     build().save(path)
     print('wrote', path)

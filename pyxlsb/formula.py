@@ -46,6 +46,10 @@ _BINARY_OPS = {
   0x0F: ' ', 0x10: ',', 0x11: ':'
 }
 
+# What a reference to a deleted sheet collapses to. A real sheet can never
+# render as this, because Excel forbids '!' in a sheet name.
+REF_ERROR = '#REF!'
+
 _SAFE_SHEET_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_.]*$')
 _LOOKS_LIKE_REF = re.compile(r'^\$?[A-Za-z]{1,3}\$?[0-9]{1,7}$')
 
@@ -136,17 +140,21 @@ class FormulaContext(object):
     return first < 0 or last < 0
 
   def sheet_ref(self, ixti):
-    """Render the `Sheet!` prefix for an external reference index."""
+    """Name the sheet an external reference index points at.
+
+    Returns REF_ERROR when it points nowhere, which happens once the sheet a
+    formula referred to has been deleted.
+    """
     if ixti < 0 or ixti >= len(self.xtis):
-      return '#REF!'
+      return REF_ERROR
     supbook, first, last = self.xtis[ixti]
     if first < 0 or last < 0:
-      return '#REF!'
+      return REF_ERROR
     try:
       first_name = self.sheets[first]
       last_name = self.sheets[last]
     except IndexError:
-      return '#REF!'
+      return REF_ERROR
     if supbook == 0:
       return quote_sheet_span(first_name, last_name)
     return quote_sheet_name('[{}]{}:{}'.format(supbook, first_name, last_name)
@@ -470,8 +478,12 @@ class Ref3dToken(Token):
     if ctx is None:
       raise FormulaError('a FormulaContext is required to resolve 3D references')
     sheet = ctx.sheet_ref(self.ixti)
+    if sheet == REF_ERROR:
+      # The sheet itself is gone, so the whole reference collapses.
+      stack.append(space.before + REF_ERROR)
+      return
     if self.err:
-      body = '#REF!'
+      body = REF_ERROR
     elif self.last is not None:
       body = _area_text(self.ref, self.last)
     else:
@@ -495,7 +507,8 @@ class NameToken(Token):
     if self.ixti is not None:
       if not ctx.is_workbook_scope(self.ixti):
         # The index names a sheet directly, as for a linked workbook.
-        name = '{}!{}'.format(ctx.sheet_ref(self.ixti), name)
+        sheet = ctx.sheet_ref(self.ixti)
+        name = name if sheet == REF_ERROR else '{}!{}'.format(sheet, name)
       else:
         # Otherwise the qualifier comes from the scope on the name itself.
         owner = ctx.name_scope(self.idx)

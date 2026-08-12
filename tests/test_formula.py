@@ -29,6 +29,9 @@ SPACED_TRUTH = xlsx_formulas('fixture3_excel.xlsx', 'Space')
 SCOPED = read_formulas('fixture4.xlsb', 'Calc')
 SCOPED_TRUTH = xlsx_formulas('fixture4_excel.xlsx', 'Calc')
 
+DELETED = read_formulas('fixture5.xlsb', 'Keep')
+DELETED_TRUTH = xlsx_formulas('fixture5_excel.xlsx', 'Keep')
+
 # Excel prefixes an unresolved user function with `_xludf.` when it writes
 # .xlsx, but stores the bare name in .xlsb. We report what the file holds.
 EXTRAS_TRUTH['H19'] = EXTRAS_TRUTH['H19'].replace('_xludf.', '')
@@ -54,11 +57,17 @@ def test_name_scope_span_and_number_forms_match_excel(ref):
   assert SCOPED.get(ref) == SCOPED_TRUTH[ref]
 
 
+@pytest.mark.parametrize('ref', sorted(DELETED_TRUTH))
+def test_deleted_sheet_references_match_excel(ref):
+  assert DELETED.get(ref) == DELETED_TRUTH[ref]
+
+
 def test_every_formula_cell_is_found():
   assert set(CORPUS) == set(CORPUS_TRUTH)
   assert set(EXTRAS) == set(EXTRAS_TRUTH)
   assert set(SPACED) == set(SPACED_TRUTH)
   assert set(SCOPED) == set(SCOPED_TRUTH)
+  assert set(DELETED) == set(DELETED_TRUTH)
 
 
 class TestDefinedNameScope(object):
@@ -75,6 +84,25 @@ class TestDefinedNameScope(object):
   def test_workbook_scoped_name_stays_bare(self):
     assert SCOPED['D3'] == 'GlobalRate'
     assert SCOPED['D4'] == 'GlobalRate+Alpha!LocalRate'
+
+
+class TestDeletedSheetReferences(object):
+  """Once the sheet is gone the whole reference collapses to #REF!.
+
+  The cell part is still recorded in the token, so rendering it anyway would
+  produce `#REF!!D75` -- a string Excel never writes.
+  """
+
+  def test_reference_collapses_entirely(self):
+    assert DELETED['D1'] == '#REF!'
+    assert DELETED['D4'] == '#REF!+A1'
+
+  def test_inside_a_call_or_range(self):
+    assert DELETED['D2'] == 'SUM(#REF!)'
+    assert DELETED['D3'] == 'IF(A1=1,#REF!,0)'
+
+  def test_untouched_formulas_are_unaffected(self):
+    assert DELETED['D5'] == 'A1+A2'
 
 
 class TestSheetSpans(object):

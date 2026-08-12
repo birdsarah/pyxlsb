@@ -11,6 +11,7 @@ agreeing with our own reading of the format.
 | `fixture2.xlsb` / `fixture2_excel.xlsx` | Single- and multi-cell array (CSE) formulas, a sheet name containing an apostrophe, deeper nesting, and modern `_xlfn.` functions. |
 | `fixture3.xlsb` / `fixture3_excel.xlsx` | Formulas carrying the whitespace their author typed, including spaces inside call parentheses, around prefix and postfix operators, and the space that *is* the intersection operator. |
 | `fixture4.xlsb` / `fixture4_excel.xlsx` | Defined names scoped to a sheet rather than the workbook, spans of sheets with and without names needing quotes, and numeric literals small enough to tempt exponent notation. |
+| `fixture5.xlsb` / `fixture5_excel.xlsx` | References to a sheet that was deleted after the formulas were written, which Excel rewrites to `#REF!`. Built by deleting the `Doomed` sheet in Excel before saving. |
 | `simple.xlsb` | A minimal real-world workbook (`B2 =A2+A1`, `B3 =A3+B2`). |
 
 ## Regenerating
