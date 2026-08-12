@@ -2,22 +2,31 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 from . import biff12
+from .formula import FormulaContext
 from .reader import BIFF12Reader
 from .stringtable import StringTable
-from .worksheet import Worksheet
+from .worksheet import FORMULA_ERROR_MODES, Worksheet
 from tempfile import TemporaryFile
 
 if sys.version_info > (3,):
   basestring = (str, bytes)
 
 class Workbook(object):
-  def __init__(self, fp, debug=False):
+  def __init__(self, fp, debug=False, parse_formulas=True, formula_errors='raise'):
     super(Workbook, self).__init__()
+    if formula_errors not in FORMULA_ERROR_MODES:
+      raise ValueError('formula_errors must be one of {}, got {!r}'
+                       .format(', '.join(FORMULA_ERROR_MODES), formula_errors))
     self._zf = fp
     self._debug = debug
+    self._parse_formulas = parse_formulas
+    self._formula_errors = formula_errors
     self._sheets = []
     self.stringtable = None
+    self.formula_context = None
     self._parse()
+    if parse_formulas:
+      self.formula_context = self._build_formula_context()
 
   def __enter__(self):
     return self
@@ -58,6 +67,52 @@ class Workbook(object):
       temp.close()
       raise
 
+  def _copy_part(self, name):
+    temp = TemporaryFile()
+    with self._zf.open(name, 'r') as zf:
+      temp.write(zf.read())
+      temp.seek(0, os.SEEK_SET)
+    return temp
+
+  def _build_formula_context(self):
+    """Collect the workbook-level tables formula text is written in terms of.
+
+    3D references arrive as an index into the ExternSheet table, defined names
+    as an index into the name table, and structured references as a table id,
+    so none of them can be rendered from the worksheet part alone.
+    """
+    xtis = []
+    names = []
+    with self._copy_part('xl/workbook.bin') as temp:
+      reader = BIFF12Reader(fp=temp, debug=self._debug)
+      for item in reader:
+        if item[0] == biff12.EXTERNSHEET:
+          xtis.extend(item[1].xtis)
+        elif item[0] == biff12.DEFINEDNAME:
+          names.append(item[1].name)
+        elif item[0] == biff12.WORKBOOK_END:
+          break
+
+    tables = {}
+    for part in self._zf.namelist():
+      if not part.startswith('xl/tables/') or not part.endswith('.bin'):
+        continue
+      table_id = None
+      table_name = None
+      columns = []
+      with self._copy_part(part) as temp:
+        reader = BIFF12Reader(fp=temp, debug=self._debug)
+        for item in reader:
+          if item[0] == biff12.TABLE:
+            table_id = item[1].id
+            table_name = item[1].name
+          elif item[0] == biff12.TABLECOLUMN:
+            columns.append(item[1].name)
+      if table_id is not None and table_name:
+        tables[table_id] = (table_name, columns)
+
+    return FormulaContext(sheets=self.sheets, xtis=xtis, names=names, tables=tables)
+
   def get_sheet(self, idx, rels=False):
     if isinstance(idx, basestring):
       idx = [s.lower() for s, _ in self._sheets].index(idx.lower()) + 1
@@ -80,7 +135,9 @@ class Workbook(object):
     else:
       rels_temp = None
 
-    return Worksheet(name=name, fp=temp, rels_fp=rels_temp, stringtable=self.stringtable, debug=self._debug)
+    return Worksheet(name=name, fp=temp, rels_fp=rels_temp, stringtable=self.stringtable,
+                     debug=self._debug, formula_context=self.formula_context,
+                     formula_errors=self._formula_errors)
 
   def close(self):
     self._zf.close()

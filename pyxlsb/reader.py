@@ -39,6 +39,12 @@ class RecordReader(object):
       return None
     return uint32_t.unpack(buff)[0]
 
+  def read_signed_int(self):
+    buff = self._fp.read(4)
+    if len(buff) < 4:
+      return None
+    return int32_t.unpack(buff)[0]
+
   def read_short(self):
     buff = self._fp.read(2)
     if len(buff) < 2:
@@ -84,10 +90,16 @@ class RecordReader(object):
 class BIFF12Reader(object):
   handlers = {
     # Workbook part handlers
-    biff12.WORKBOOK:   BasicHandler('workbook'),
-    biff12.SHEETS:     BasicHandler('sheets'),
-    biff12.SHEETS_END: BasicHandler('/sheets'),
-    biff12.SHEET:      SheetHandler(),
+    biff12.WORKBOOK:    BasicHandler('workbook'),
+    biff12.SHEETS:      BasicHandler('sheets'),
+    biff12.SHEETS_END:  BasicHandler('/sheets'),
+    biff12.SHEET:       SheetHandler(),
+    biff12.DEFINEDNAME: NameHandler(),
+    biff12.EXTERNSHEET: ExternSheetHandler(),
+
+    # Table part handlers
+    biff12.TABLE:       TableHandler(),
+    biff12.TABLECOLUMN: TableColumnHandler(),
 
     # SharedStrings part handlers
     biff12.SST:     StringTableHandler(),
@@ -114,6 +126,8 @@ class BIFF12Reader(object):
     biff12.FORMULA_FLOAT:   CellHandler(),
     biff12.FORMULA_BOOL:    CellHandler(),
     biff12.FORMULA_BOOLERR: CellHandler(),
+    biff12.SHAREDFORMULA:   SharedFormulaHandler(),
+    biff12.ARRAYFORMULA:    ArrayFormulaHandler(),
     biff12.HYPERLINK:       HyperlinkHandler()
   }
 

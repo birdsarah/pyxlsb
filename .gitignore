@@ -4,6 +4,7 @@
 *.pyo
 *.sublime-*
 *.xlsb
+!tests/files/*.xlsb
 build/
 dist/
 venv/

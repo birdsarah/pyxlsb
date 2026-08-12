@@ -1,3 +1,4 @@
+from .formula import FormulaContext, FormulaError
 from .handlers import Handler
 from .reader import BIFF12Reader
 from .workbook import Workbook
@@ -5,10 +6,11 @@ from .worksheet import Worksheet
 
 __version__ = '1.0.11'
 
-def open_workbook(name, debug=False):
+def open_workbook(name, debug=False, parse_formulas=True, formula_errors='raise'):
   from zipfile import ZipFile
   zf = ZipFile(name, 'r')
-  return Workbook(fp=zf, debug=debug)
+  return Workbook(fp=zf, debug=debug, parse_formulas=parse_formulas,
+                  formula_errors=formula_errors)
 
 def convert_date(date):
   if not isinstance(date, int) and not isinstance(date, float):

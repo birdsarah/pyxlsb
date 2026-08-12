@@ -97,7 +97,18 @@ class RowHandler(Handler):
     return self.cls._make([r])
 
 
+FORMULA_RECORDS = frozenset([
+  biff12.FORMULA_STRING,
+  biff12.FORMULA_FLOAT,
+  biff12.FORMULA_BOOL,
+  biff12.FORMULA_BOOLERR
+])
+
+
 class CellHandler(Handler):
+  # `f` carries the raw CellParsedFormula as an (rgce, rgcb) pair, or None for
+  # a cell with no formula. Turning that into text needs workbook-level tables
+  # the handler cannot see, so Worksheet does the rendering.
   cls = namedtuple('c', ['c', 'v', 'f', 'style'])
 
   def __init__(self):
@@ -125,7 +136,130 @@ class CellHandler(Handler):
       val = reader.read_byte() != 0
     elif recid == biff12.FORMULA_BOOLERR:
       val = hex(reader.read_byte())
-    return self.cls._make([col, val, None, style])
+
+    fmla = None
+    if recid in FORMULA_RECORDS:
+      reader.skip(2)
+      fmla = read_parsed_formula(reader)
+    return self.cls._make([col, val, fmla, style])
+
+
+def read_parsed_formula(reader):
+  """Read a CellParsedFormula: cce, rgce, cb, rgcb."""
+  cce = reader.read_int()
+  if not cce:
+    return None
+  rgce = reader.read(cce)
+  cb = reader.read_int() or 0
+  rgcb = reader.read(cb) if cb else b''
+  return (rgce, rgcb)
+
+
+class SharedFormulaHandler(Handler):
+  cls = namedtuple('shrfmla', ['r', 'c', 'h', 'w', 'f'])
+
+  def __init__(self):
+    super(SharedFormulaHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    r1 = reader.read_int()
+    r2 = reader.read_int()
+    c1 = reader.read_int()
+    c2 = reader.read_int()
+    cce = reader.read_int() or 0
+    rgce = reader.read(cce) if cce else b''
+    return self.cls._make([r1, c1, r2 - r1 + 1, c2 - c1 + 1, (rgce, b'')])
+
+
+class ArrayFormulaHandler(Handler):
+  cls = namedtuple('arrfmla', ['r', 'c', 'h', 'w', 'f'])
+
+  def __init__(self):
+    super(ArrayFormulaHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    r1 = reader.read_int()
+    r2 = reader.read_int()
+    c1 = reader.read_int()
+    c2 = reader.read_int()
+    reader.skip(1)                 # flags
+    return self.cls._make([r1, c1, r2 - r1 + 1, c2 - c1 + 1, read_parsed_formula(reader)])
+
+
+class NameHandler(Handler):
+  cls = namedtuple('name', ['name', 'itab', 'f'])
+
+  def __init__(self):
+    super(NameHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    reader.skip(4)                 # flags
+    reader.skip(1)                 # chKey
+    itab = reader.read_int()
+    name = reader.read_string()
+    return self.cls._make([name, itab, read_parsed_formula(reader)])
+
+
+class ExternSheetHandler(Handler):
+  cls = namedtuple('externsheet', ['xtis'])
+
+  def __init__(self):
+    super(ExternSheetHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    count = reader.read_int() or 0
+    xtis = []
+    for _ in range(count):
+      supbook = reader.read_signed_int()
+      first = reader.read_signed_int()
+      last = reader.read_signed_int()
+      if supbook is None or first is None or last is None:
+        break
+      xtis.append((supbook, first, last))
+    return self.cls._make([xtis])
+
+
+def _valid_identifier(name):
+  """Names Excel will accept for a table or column: no control characters."""
+  return bool(name) and all(ch >= ' ' for ch in name)
+
+
+class TableHandler(Handler):
+  cls = namedtuple('table', ['id', 'name'])
+
+  # rfx (16 bytes) then twelve fixed-size fields, then the name strings.
+  ID_OFFSET = 20
+  NAME_OFFSET = 64
+
+  def __init__(self):
+    super(TableHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    reader.seek(self.ID_OFFSET)
+    tid = reader.read_int()
+    reader.seek(self.NAME_OFFSET)
+    name = reader.read_string()
+    # Returning None drops the table from the lookup, which makes any
+    # structured reference to it raise instead of rendering a wrong name.
+    if tid is None or not _valid_identifier(name):
+      return None
+    return self.cls._make([tid, name])
+
+
+class TableColumnHandler(Handler):
+  cls = namedtuple('tablecolumn', ['name'])
+
+  NAME_OFFSET = 28
+
+  def __init__(self):
+    super(TableColumnHandler, self).__init__()
+
+  def read(self, reader, recid, reclen):
+    reader.seek(self.NAME_OFFSET)
+    name = reader.read_string()
+    if not _valid_identifier(name):
+      return None
+    return self.cls._make([name])
 
 
 class HyperlinkHandler(Handler):
