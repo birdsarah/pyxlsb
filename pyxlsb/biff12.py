@@ -14,6 +14,9 @@ WORKBOOKVIEW           = 0x019E
 EXTERNALREFERENCES     = 0x02E1
 EXTERNALREFERENCES_END = 0x02E2
 EXTERNALREFERENCE      = 0x02E3
+SUPSELF                = 0x02E5
+SUPSAME                = 0x02E6
+EXTERNSHEET            = 0x02EA
 WEBPUBLISHING          = 0x04A9
 
 # Worksheet records
@@ -40,6 +43,8 @@ SHEETDATA_END             = 0x0192
 SHEETPR                   = 0x0193
 DIMENSION                 = 0x0194
 SELECTION                 = 0x0198
+ARRAYFORMULA              = 0x03AA
+SHAREDFORMULA             = 0x03AB
 COLS                      = 0x0386
 COLS_END                  = 0x0387
 CONDITIONALFORMATTING     = 0x03CD
