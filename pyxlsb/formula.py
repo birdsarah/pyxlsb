@@ -15,6 +15,7 @@ See [MS-XLSB] 2.5.97 for the token layouts.
 import re
 import struct
 import sys
+from decimal import Decimal
 from .ftab import FTAB, FTAB_ARITY
 
 if sys.version_info > (3,):
@@ -67,16 +68,36 @@ def col_name(idx):
   return name
 
 
+def _needs_quoting(name):
+  return not _SAFE_SHEET_NAME.match(name) or bool(_LOOKS_LIKE_REF.match(name))
+
+
 def quote_sheet_name(name):
-  if _SAFE_SHEET_NAME.match(name) and not _LOOKS_LIKE_REF.match(name):
+  if not _needs_quoting(name):
     return name
   return "'" + name.replace("'", "''") + "'"
+
+
+def quote_sheet_span(first, last):
+  """Name a sheet, or a span of them, the way Excel writes the reference.
+
+  A span is quoted as a whole or not at all -- `Jan:Dec!A1` stays bare, while
+  `'Q1 Actual:Q4 Actual'!A1` puts one pair of quotes around both ends.
+  """
+  if first == last:
+    return quote_sheet_name(first)
+  if _needs_quoting(first) or _needs_quoting(last):
+    return "'{}:{}'".format(first.replace("'", "''"), last.replace("'", "''"))
+  return '{}:{}'.format(first, last)
 
 
 def _format_number(value):
   if value == int(value) and abs(value) < 1e15:
     return str(int(value))
   text = repr(float(value))
+  if 'e' in text or 'E' in text:
+    # Excel writes small magnitudes out in full rather than in exponent form.
+    text = format(Decimal(text), 'f')
   if text.endswith('.0'):
     text = text[:-2]
   return text
@@ -94,12 +115,25 @@ class FormulaContext(object):
   inventing a placeholder.
   """
 
-  def __init__(self, sheets=None, xtis=None, names=None, tables=None):
+  def __init__(self, sheets=None, xtis=None, names=None, tables=None,
+               name_scopes=None):
     super(FormulaContext, self).__init__()
     self.sheets = list(sheets or [])
     self.xtis = list(xtis or [])
     self.names = list(names or [])
+    self.name_scopes = list(name_scopes or [])
     self.tables = dict(tables or {})
+
+  def is_workbook_scope(self, ixti):
+    """True when an index names the workbook itself rather than a sheet.
+
+    Defined names are scoped either to one sheet or to the whole workbook,
+    and only the former are written with a `Sheet!` qualifier.
+    """
+    if ixti < 0 or ixti >= len(self.xtis):
+      return False
+    _, first, last = self.xtis[ixti]
+    return first < 0 or last < 0
 
   def sheet_ref(self, ixti):
     """Render the `Sheet!` prefix for an external reference index."""
@@ -108,24 +142,30 @@ class FormulaContext(object):
     supbook, first, last = self.xtis[ixti]
     if first < 0 or last < 0:
       return '#REF!'
-    prefix = '' if supbook == 0 else '[{}]'.format(supbook)
     try:
       first_name = self.sheets[first]
       last_name = self.sheets[last]
     except IndexError:
       return '#REF!'
-    if first == last:
-      body = first_name
-    else:
-      body = '{}:{}'.format(first_name, last_name)
-    if prefix:
-      return quote_sheet_name(prefix + body)
-    return quote_sheet_name(body)
+    if supbook == 0:
+      return quote_sheet_span(first_name, last_name)
+    return quote_sheet_name('[{}]{}:{}'.format(supbook, first_name, last_name)
+                            if first != last
+                            else '[{}]{}'.format(supbook, first_name))
 
   def name(self, idx):
     if idx < 1 or idx > len(self.names):
       raise FormulaError('defined name index {} out of range'.format(idx))
     return self.names[idx - 1]
+
+  def name_scope(self, idx):
+    """The sheet a defined name is scoped to, or None if workbook-scoped."""
+    if idx < 1 or idx > len(self.name_scopes):
+      return None
+    itab = self.name_scopes[idx - 1]
+    if itab is None or itab < 0 or itab >= len(self.sheets):
+      return None
+    return self.sheets[itab]
 
   def table(self, idx):
     if idx not in self.tables:
@@ -440,9 +480,9 @@ class Ref3dToken(Token):
 
 
 class NameToken(Token):
-  # PtgNameX carries an ixti as well, but a name belonging to this workbook is
-  # written unqualified, which is the only case we can name properly; a name
-  # owned by a linked workbook would need that workbook's own name table.
+  # PtgName is a workbook-scoped name and stands alone. PtgNameX carries an
+  # ixti too: when that resolves to a sheet the name is scoped to that sheet
+  # and Excel writes it qualified, as `Sheet!Name`.
   def __init__(self, idx, ixti=None):
     super(NameToken, self).__init__()
     self.idx = idx
@@ -451,7 +491,17 @@ class NameToken(Token):
   def render(self, stack, ctx, space=EMPTY_SPACING):
     if ctx is None:
       raise FormulaError('a FormulaContext is required to resolve defined names')
-    stack.append(space.before + ctx.name(self.idx))
+    name = ctx.name(self.idx)
+    if self.ixti is not None:
+      if not ctx.is_workbook_scope(self.ixti):
+        # The index names a sheet directly, as for a linked workbook.
+        name = '{}!{}'.format(ctx.sheet_ref(self.ixti), name)
+      else:
+        # Otherwise the qualifier comes from the scope on the name itself.
+        owner = ctx.name_scope(self.idx)
+        if owner is not None:
+          name = '{}!{}'.format(quote_sheet_name(owner), name)
+    stack.append(space.before + name)
 
 
 class FuncToken(Token):
@@ -478,7 +528,7 @@ class FuncToken(Token):
     if name == 'UDF' and args:
       # iftab 255 is the user-defined-function marker: the first operand is
       # the function's own name, the rest are its arguments.
-      head, args = args[0], args[1:]
+      head, args = space.before + args[0], args[1:]
     else:
       head = space.before + name
     stack.append('{}{}({}{})'.format(

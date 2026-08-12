@@ -193,12 +193,42 @@ def build_spaced():
   return wb
 
 
+def build_scoped():
+  """Sheet-scoped names, multi-sheet spans, and small numeric literals."""
+  wb = Workbook()
+  alpha = wb.active
+  alpha.title = 'Alpha'
+  for name in ('Alpha', 'Jan', 'Feb', 'Mar', 'Q1 Data', 'Q4 Data', 'Calc'):
+    ws = alpha if name == 'Alpha' else wb.create_sheet(name)
+    for i in range(1, 6):
+      ws.cell(row=i, column=1, value=float(i))
+      ws.cell(row=i, column=2, value=float(i * 2))
+
+  alpha.defined_names.add(DefinedName('LocalRate', attr_text='Alpha!$B$2'))
+  wb.defined_names['GlobalRate'] = DefinedName('GlobalRate', attr_text='Alpha!$B$3')
+
+  calc = wb['Calc']
+  formulas = [
+      '=Alpha!LocalRate', '=Alpha!LocalRate*2', '=GlobalRate',
+      '=GlobalRate+Alpha!LocalRate', '=SUM(Jan:Mar!A1)', '=SUM(Jan:Mar!A1:A5)',
+      "=SUM('Q1 Data:Q4 Data'!A1)", "='Q1 Data:Q4 Data'!B2",
+      '=A1*0.00001', '=A1*0.0000001', '=0.000000123', '=A1/3',
+      '=1234567890123', '=A1*1000000',
+  ]
+  for k, f in enumerate(formulas):
+    calc.cell(row=k + 1, column=4, value=f)
+  for i in range(1, 6):
+    calc.cell(row=i, column=1, value=float(i))
+  return wb
+
+
 if __name__ == '__main__':
   if not os.path.isdir(OUTDIR):
     os.makedirs(OUTDIR)
   for name, build in (('fixture.xlsx', build_corpus),
                       ('fixture2.xlsx', build_extras),
-                      ('fixture3.xlsx', build_spaced)):
+                      ('fixture3.xlsx', build_spaced),
+                      ('fixture4.xlsx', build_scoped)):
     path = os.path.join(OUTDIR, name)
     build().save(path)
     print('wrote', path)

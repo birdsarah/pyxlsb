@@ -83,6 +83,7 @@ class Workbook(object):
     """
     xtis = []
     names = []
+    name_scopes = []
     with self._copy_part('xl/workbook.bin') as temp:
       reader = BIFF12Reader(fp=temp, debug=self._debug)
       for item in reader:
@@ -90,6 +91,7 @@ class Workbook(object):
           xtis.extend(item[1].xtis)
         elif item[0] == biff12.DEFINEDNAME:
           names.append(item[1].name)
+          name_scopes.append(item[1].itab)
         elif item[0] == biff12.WORKBOOK_END:
           break
 
@@ -111,7 +113,8 @@ class Workbook(object):
       if table_id is not None and table_name:
         tables[table_id] = (table_name, columns)
 
-    return FormulaContext(sheets=self.sheets, xtis=xtis, names=names, tables=tables)
+    return FormulaContext(sheets=self.sheets, xtis=xtis, names=names,
+                          name_scopes=name_scopes, tables=tables)
 
   def get_sheet(self, idx, rels=False):
     if isinstance(idx, basestring):

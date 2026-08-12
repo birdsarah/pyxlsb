@@ -195,7 +195,7 @@ class NameHandler(Handler):
   def read(self, reader, recid, reclen):
     reader.skip(4)                 # flags
     reader.skip(1)                 # chKey
-    itab = reader.read_int()
+    itab = reader.read_signed_int()          # -1 when scoped to the workbook
     name = reader.read_string()
     return self.cls._make([name, itab, read_parsed_formula(reader)])
 

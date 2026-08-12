@@ -26,6 +26,9 @@ EXTRAS_TRUTH = xlsx_formulas('fixture2_excel.xlsx', 'Calc')
 SPACED = read_formulas('fixture3.xlsb', 'Space')
 SPACED_TRUTH = xlsx_formulas('fixture3_excel.xlsx', 'Space')
 
+SCOPED = read_formulas('fixture4.xlsb', 'Calc')
+SCOPED_TRUTH = xlsx_formulas('fixture4_excel.xlsx', 'Calc')
+
 # Excel prefixes an unresolved user function with `_xludf.` when it writes
 # .xlsx, but stores the bare name in .xlsb. We report what the file holds.
 EXTRAS_TRUTH['H19'] = EXTRAS_TRUTH['H19'].replace('_xludf.', '')
@@ -46,10 +49,57 @@ def test_author_whitespace_is_preserved(ref):
   assert SPACED.get(ref) == SPACED_TRUTH[ref]
 
 
+@pytest.mark.parametrize('ref', sorted(SCOPED_TRUTH))
+def test_name_scope_span_and_number_forms_match_excel(ref):
+  assert SCOPED.get(ref) == SCOPED_TRUTH[ref]
+
+
 def test_every_formula_cell_is_found():
   assert set(CORPUS) == set(CORPUS_TRUTH)
   assert set(EXTRAS) == set(EXTRAS_TRUTH)
   assert set(SPACED) == set(SPACED_TRUTH)
+  assert set(SCOPED) == set(SCOPED_TRUTH)
+
+
+class TestDefinedNameScope(object):
+  """A name scoped to one sheet is written qualified when seen from another.
+
+  The qualifier does not come from the reference's ExternSheet entry -- that
+  entry carries a sentinel -- but from the scope recorded on the name itself.
+  """
+
+  def test_sheet_scoped_name_is_qualified(self):
+    assert SCOPED['D1'] == 'Alpha!LocalRate'
+    assert SCOPED['D2'] == 'Alpha!LocalRate*2'
+
+  def test_workbook_scoped_name_stays_bare(self):
+    assert SCOPED['D3'] == 'GlobalRate'
+    assert SCOPED['D4'] == 'GlobalRate+Alpha!LocalRate'
+
+
+class TestSheetSpans(object):
+  """A span of sheets is quoted as a whole, or not at all."""
+
+  def test_span_needing_no_quotes(self):
+    assert SCOPED['D5'] == 'SUM(Jan:Mar!A1)'
+    assert SCOPED['D6'] == 'SUM(Jan:Mar!A1:A5)'
+
+  def test_span_needing_quotes_wraps_both_ends_once(self):
+    assert SCOPED['D7'] == "SUM('Q1 Data:Q4 Data'!A1)"
+    assert SCOPED['D8'] == "'Q1 Data:Q4 Data'!B2"
+
+
+class TestNumberFormatting(object):
+  """Small magnitudes are written out in full, as Excel writes them."""
+
+  def test_small_numbers_avoid_exponent_form(self):
+    assert SCOPED['D9'] == 'A1*0.00001'
+    assert SCOPED['D10'] == 'A1*0.0000001'
+    assert SCOPED['D11'] == '0.000000123'
+
+  def test_large_integers_stay_integral(self):
+    assert SCOPED['D13'] == '1234567890123'
+    assert SCOPED['D14'] == 'A1*1000000'
 
 
 class TestWhitespace(object):

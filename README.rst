@@ -108,8 +108,11 @@ tables. Pass ``parse_formulas=False`` to skip all of it, in which case
 The whitespace an author typed inside a formula is preserved, so the text
 round-trips byte for byte against what Excel itself writes.
 
-Known gap: references into *other workbooks* render with a numeric ``[n]``
-book prefix rather than the linked file name.
+Known gaps: references into *other workbooks* render with a numeric
+``[n]`` book prefix rather than the linked file name; and where a legacy
+formula relies on implicit intersection, Excel adds an explicit
+``_xlfn.SINGLE(...)`` wrapper when it exports to ``.xlsx`` that is not
+present in the ``.xlsb`` and so is not reported here.
 
 As a sense of scale, parsing adds roughly 7 µs per formula, so a workbook
 containing a million of them costs a few tens of seconds on top of the
